@@ -1,0 +1,26 @@
+{
+  "name": "sentient-alpha",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous AI Trading Agent on Mantle L2 with ERC-8004 Identity",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "engine:dev": "npm -w packages/engine run dev",
+    "engine:paper": "npm -w packages/engine run paper",
+    "engine:start": "npm -w packages/engine run start",
+    "engine:backtest": "npm -w packages/engine run backtest",
+    "dashboard:dev": "npm -w packages/dashboard run dev",
+    "contracts:build": "npm -w packages/contracts run build",
+    "contracts:test": "npm -w packages/contracts run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.0"
+  }
+}

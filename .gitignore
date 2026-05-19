@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+.turbo/
+.env
+.env.local
+*.log
+coverage/
+out/
+cache/
+broadcast/
+packages/contracts/out/
+packages/contracts/cache/
