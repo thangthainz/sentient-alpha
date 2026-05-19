@@ -1,4 +1,5 @@
 import { fetchOhlcvExtended } from "../data/gecko-terminal.js";
+import { fetchOhlcvOnchain } from "../data/onchain-ohlcv.js";
 import { runBacktest } from "./backtest.js";
 import type { PaperTrader, PaperTrade } from "./tracker.js";
 
@@ -39,18 +40,29 @@ export async function seedPaperTrader(
 
   console.log(`[SEED] Replaying ${config.daysBack} days of history across ${config.pools.length} pools...`);
 
+  // For >180d, use on-chain log fetching (no API rate limit)
+  const useOnchain = config.daysBack > 180;
+
   for (const pool of config.pools) {
     try {
-      console.log(`[SEED] Fetching extended history for ${pool.name}...`);
-      const targetCandles = Math.min(config.daysBack * 24, 4320);
-      const candles1h = await fetchOhlcvExtended(pool.address, "1h", targetCandles);
+      let candles1h: import("@sentient-alpha/shared").Candle[];
+      let candles4h: import("@sentient-alpha/shared").Candle[];
+
+      if (useOnchain) {
+        console.log(`[SEED] Fetching ${config.daysBack}d on-chain history for ${pool.name}...`);
+        candles1h = await fetchOhlcvOnchain(pool.address, "1h", config.daysBack);
+        candles4h = await fetchOhlcvOnchain(pool.address, "4h", config.daysBack);
+      } else {
+        console.log(`[SEED] Fetching extended history for ${pool.name}...`);
+        const targetCandles = Math.min(config.daysBack * 24, 4320);
+        candles1h = await fetchOhlcvExtended(pool.address, "1h", targetCandles);
+        candles4h = await fetchOhlcvExtended(pool.address, "4h", Math.ceil(targetCandles / 4));
+      }
 
       if (candles1h.length < 250) {
         console.log(`[SEED] ${pool.name}: skipped (${candles1h.length} candles, need >=250)`);
         continue;
       }
-
-      const candles4h = await fetchOhlcvExtended(pool.address, "4h", Math.ceil(targetCandles / 4));
 
       const result = runBacktest(candles1h, candles4h, pool.name, {
         initialCapital: config.initialCapital,

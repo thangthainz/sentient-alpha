@@ -144,23 +144,51 @@ function isStablePair(name: string): boolean {
   return parts.length === 2 && STABLECOINS.includes(parts[0]) && STABLECOINS.includes(parts[1]);
 }
 
+// In-memory + disk cache for pool discovery (rarely changes; cheap to skip 429s)
+let poolsMemCache: { ts: number; data: Array<{ address: string; name: string; volume24h: number; tvl: number }> } | null = null;
+const POOLS_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
 export async function fetchTopPools(limit = 10): Promise<Array<{ address: string; name: string; volume24h: number; tvl: number }>> {
+  if (poolsMemCache && Date.now() - poolsMemCache.ts < POOLS_CACHE_TTL) {
+    return poolsMemCache.data.slice(0, limit);
+  }
+
   const url = `${BASE}/networks/${NETWORK}/pools?page=1&sort=h24_volume_usd_desc`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error(`GeckoTerminal pools error: ${res.status}`);
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (res.ok) break;
+    if (res.status === 429) {
+      const backoff = (attempt + 1) * 10000;
+      console.log(`[GeckoTerminal] Pools 429, retry in ${backoff/1000}s`);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
+    }
+    break;
+  }
+
+  if (!res || !res.ok) {
+    if (poolsMemCache) {
+      console.log(`[GeckoTerminal] Using stale pools cache (API ${res?.status})`);
+      return poolsMemCache.data.slice(0, limit);
+    }
+    throw new Error(`GeckoTerminal pools error: ${res?.status}`);
+  }
 
   const data = await res.json() as any;
   const pools = data?.data ?? [];
 
-  return pools
+  const filtered = pools
     .map((p: any) => ({
       address: p.attributes?.address ?? p.id?.split("_")[1] ?? "",
       name: p.attributes?.name ?? "",
       volume24h: parseFloat(p.attributes?.volume_usd?.h24 ?? "0"),
       tvl: parseFloat(p.attributes?.reserve_in_usd ?? "0"),
     }))
-    .filter((p: { name: string }) => !isStablePair(p.name))
-    .slice(0, limit);
+    .filter((p: { name: string }) => !isStablePair(p.name));
+
+  poolsMemCache = { ts: Date.now(), data: filtered };
+  return filtered.slice(0, limit);
 }
 
 export async function fetchTokenPrice(tokenAddress: string): Promise<number> {

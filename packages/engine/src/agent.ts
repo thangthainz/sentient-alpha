@@ -18,6 +18,10 @@ import { LocalScheduler } from "./scheduler/scheduler.js";
 import { generateDailyBrief } from "./brief/daily-brief.js";
 import { generateWeeklyReport, formatWeeklyReport } from "./memory/weekly-insights.js";
 import { HealthTracker } from "./health/health-tracker.js";
+import { detectMacroRegime, regimeAllows } from "./data/regime.js";
+import type { MacroRegime } from "./data/regime.js";
+import { fetchAllNews, computeMarketView } from "./data/news-scanner.js";
+import type { MarketNewsView, NewsItem } from "./data/news-scanner.js";
 import { TradingMemoryStore } from "./memory/store.js";
 import { TradingLearner } from "./memory/learner.js";
 import { fetchOhlcv, fetchTopPools } from "./data/gecko-terminal.js";
@@ -41,6 +45,9 @@ export class SentientAlphaAgent {
   private health: HealthTracker = new HealthTracker();
   private cachedBrief: { fullText: string; generatedAt: number; nextRun?: number } | null = null;
   private cachedWeekly: { report: ReturnType<typeof generateWeeklyReport>; formatted: string; generatedAt: number; nextRun?: number } | null = null;
+  private currentRegime: MacroRegime | null = null;
+  private currentNewsView: MarketNewsView | null = null;
+  private latestNews: NewsItem[] = [];
 
   constructor(mode: AgentMode = "paper") {
     const rpcUrl = process.env.MANTLE_RPC_URL || "https://rpc.mantle.xyz";
@@ -110,9 +117,10 @@ export class SentientAlphaAgent {
     this.scheduler.registerDaily("daily_brief", 7, 0, () => this.generateAndCacheBrief());
     this.scheduler.registerWeeklySunday("weekly_insights", 22, 0, () => this.generateAndCacheWeekly());
 
-    // First-boot: generate one of each so the dashboard has content immediately
+    // First-boot: generate brief + weekly + refresh macro regime + news
     await this.generateAndCacheBrief();
     await this.generateAndCacheWeekly();
+    await this.refreshRegimeAndNews();
 
     console.log(`\n[LOOP] Starting autonomous loop (${ENGINE.CYCLE_INTERVAL_MS / 1000}s interval)\n`);
     await this.runCycle();
@@ -123,6 +131,11 @@ export class SentientAlphaAgent {
     this.state.cycleCount++;
     const cycleNum = this.state.cycleCount;
     console.log(`\n========== CYCLE #${cycleNum} ==========`);
+
+    // Refresh macro regime + news every 6 cycles (~12 min at 120s interval)
+    if (cycleNum === 1 || cycleNum % 6 === 0) {
+      await this.refreshRegimeAndNews().catch(err => console.error("[REGIME] refresh failed:", err.message));
+    }
 
     for (let i = 0; i < this.watchedPools.length; i++) {
       const pool = this.watchedPools[i];
@@ -147,7 +160,7 @@ export class SentientAlphaAgent {
       }
       const closed = this.paper.updatePositions(prices);
       for (const trade of closed) {
-        this.risk.recordResult(trade.score.setup.type, trade.win ?? false);
+        this.risk.recordResult(trade.score.setup.type, trade.direction, trade.win ?? false);
         const resultMemory = this.learner.autoRecordTradeResult(trade);
         this.memory.add(resultMemory.content, "trade_result", {
           pair: trade.pair,
@@ -263,7 +276,26 @@ export class SentientAlphaAgent {
       return;
     }
 
-    const tradeCheck = this.risk.shouldTrade(setup.type);
+    // Macro regime gate
+    if (this.currentRegime) {
+      const allow = regimeAllows(this.currentRegime, setup.direction, score.total, indicators.rsi);
+      if (!allow.ok) {
+        decision.reason = `${this.currentRegime.regime}: ${allow.reason}`;
+        console.log(`[SKIP] ${poolName}: ${decision.reason}`);
+        this.state.decisions.push(decision);
+        return;
+      }
+    }
+
+    // News critical-negative gate (only for LONG entries)
+    if (this.currentNewsView && setup.direction === "LONG" && this.currentNewsView.criticalNegative >= 2) {
+      decision.reason = `Critical negative news (${this.currentNewsView.criticalNegative} items) blocks LONG`;
+      console.log(`[SKIP] ${poolName}: ${decision.reason}`);
+      this.state.decisions.push(decision);
+      return;
+    }
+
+    const tradeCheck = this.risk.shouldTrade(setup.type, setup.direction);
     if (!tradeCheck.allowed) {
       decision.reason = tradeCheck.reason;
       console.log(`[SKIP] ${poolName}: ${tradeCheck.reason}`);
@@ -336,6 +368,29 @@ export class SentientAlphaAgent {
   getSeedResult(): SeedResult | null {
     return this.seedResult;
   }
+
+  // ---- Regime + news ----
+
+  private async refreshRegimeAndNews(): Promise<void> {
+    try {
+      this.currentRegime = await detectMacroRegime();
+      console.log(`[REGIME] ${this.currentRegime.regime} — ${this.currentRegime.reason}`);
+    } catch (err: any) {
+      console.error("[REGIME] detect failed:", err.message);
+    }
+
+    try {
+      this.latestNews = await fetchAllNews();
+      this.currentNewsView = computeMarketView(this.latestNews);
+      console.log(`[NEWS] ${this.currentNewsView.itemCount} items | regime=${this.currentNewsView.regime} | F&G=${this.currentNewsView.fearGreedProxy.toFixed(0)} | crit-: ${this.currentNewsView.criticalNegative} crit+: ${this.currentNewsView.criticalPositive}`);
+    } catch (err: any) {
+      console.error("[NEWS] fetch failed:", err.message);
+    }
+  }
+
+  getRegime(): MacroRegime | null { return this.currentRegime; }
+  getNewsView(): MarketNewsView | null { return this.currentNewsView; }
+  getLatestNews(limit = 20): NewsItem[] { return this.latestNews.slice(0, limit); }
 
   // ---- Scheduled brief / weekly ----
 

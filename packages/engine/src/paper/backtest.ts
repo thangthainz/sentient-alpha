@@ -74,9 +74,9 @@ export function runBacktest(
       : undefined;
 
     const prices = new Map([[pair, currentPrice]]);
-    const closed = trader.updatePositions(prices);
+    const closed = trader.updatePositions(prices, timestamp);
     for (const trade of closed) {
-      risk.recordResult(trade.score.setup.type, trade.win ?? false);
+      risk.recordResult(trade.score.setup.type, trade.direction, trade.win ?? false);
     }
 
     if (i % 4 !== 0) {
@@ -102,7 +102,7 @@ export function runBacktest(
 
     if (score.total < cfg.entryThreshold) continue;
 
-    const tradeCheck = risk.shouldTrade(setup.type);
+    const tradeCheck = risk.shouldTrade(setup.type, setup.direction);
     if (!tradeCheck.allowed) continue;
 
     if (!trader.canOpenPosition()) continue;
@@ -114,7 +114,7 @@ export function runBacktest(
       ? currentPrice + slippage
       : currentPrice - slippage;
 
-    trader.openPosition(pair, setup.direction, entryPrice, score, riskParams);
+    trader.openPosition(pair, setup.direction, entryPrice, score, riskParams, timestamp);
 
     risk.setPortfolioValue(trader.getPortfolio().currentCapital);
     equityCurve.push({ timestamp, equity: trader.getPortfolio().currentCapital });

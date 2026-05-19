@@ -67,18 +67,20 @@ export class PaperTrader {
     direction: SignalDirection,
     entryPrice: number,
     score: SignalScore,
-    risk: RiskParams
+    risk: RiskParams,
+    entryTimestamp?: number
   ): PaperTrade | null {
     if (!this.canOpenPosition()) return null;
 
     const sizeUsd = this.portfolio.currentCapital * risk.positionSizePct;
+    const entryTime = entryTimestamp ?? Date.now();
 
     const trade: PaperTrade = {
-      id: `paper-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `paper-${entryTime}-${Math.random().toString(36).slice(2, 6)}`,
       pair,
       direction,
       entryPrice,
-      entryTime: Date.now(),
+      entryTime,
       stopLoss: risk.stopLossPrice,
       takeProfit: risk.takeProfitPrice,
       sizeUsd,
@@ -91,7 +93,7 @@ export class PaperTrader {
     return trade;
   }
 
-  updatePositions(prices: Map<string, number>): PaperTrade[] {
+  updatePositions(prices: Map<string, number>, exitTimestamp?: number): PaperTrade[] {
     const closed: PaperTrade[] = [];
 
     this.portfolio.openPositions = this.portfolio.openPositions.filter((trade) => {
@@ -120,7 +122,7 @@ export class PaperTrader {
       }
 
       if (shouldClose) {
-        this.closePosition(trade, currentPrice, exitReason);
+        this.closePosition(trade, currentPrice, exitReason, exitTimestamp);
         closed.push(trade);
         return false;
       }
@@ -130,9 +132,9 @@ export class PaperTrader {
     return closed;
   }
 
-  closePosition(trade: PaperTrade, exitPrice: number, reason: string): void {
+  closePosition(trade: PaperTrade, exitPrice: number, reason: string, exitTimestamp?: number): void {
     trade.exitPrice = exitPrice;
-    trade.exitTime = Date.now();
+    trade.exitTime = exitTimestamp ?? Date.now();
     trade.exitReason = reason;
 
     const priceDelta = trade.direction === "LONG"

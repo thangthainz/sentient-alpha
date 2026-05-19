@@ -147,6 +147,15 @@ const server = createServer(async (req, res) => {
       return json(res, agent.getScheduleInfo());
     }
 
+    // Macro regime + news
+    if (path === "/api/regime" && req.method === "GET") {
+      return json(res, {
+        regime: agent.getRegime(),
+        news: agent.getNewsView(),
+        headlines: agent.getLatestNews(15),
+      });
+    }
+
     // Trading Coach
     if (path === "/api/coach" && req.method === "POST") {
       const body = JSON.parse(await readBody(req));

@@ -34,6 +34,38 @@ interface Brief {
   source?: string;
 }
 
+interface RegimeData {
+  regime: {
+    regime: "BULL" | "BEAR" | "RANGE";
+    ema21: number;
+    ema55: number;
+    adx: number;
+    diffPct: number;
+    reason: string;
+    btcPrice: number;
+    generatedAt: number;
+  } | null;
+  news: {
+    itemCount: number;
+    netSentiment: number;
+    fearGreedProxy: number;
+    regime: "FEAR" | "NEUTRAL" | "GREED";
+    criticalNegative: number;
+    criticalPositive: number;
+    generatedAt: number;
+  } | null;
+  headlines: Array<{
+    source: string;
+    title: string;
+    url: string;
+    publishedTs: number;
+    sentimentScore: number;
+    importanceScore: number;
+    tickers: string[];
+    category: string;
+  }>;
+}
+
 interface Weekly {
   formatted: string;
   weekStart: string;
@@ -142,9 +174,10 @@ export default function Dashboard() {
   const [coachQ, setCoachQ] = useState("");
   const [coachA, setCoachA] = useState<CoachResponse | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
-  const [tab, setTab] = useState<"decisions" | "brief" | "weekly" | "coach" | "backtest">("decisions");
+  const [tab, setTab] = useState<"decisions" | "brief" | "weekly" | "coach" | "backtest" | "regime">("decisions");
   const [backtest, setBacktest] = useState<BacktestData | null>(null);
   const [weekly, setWeekly] = useState<Weekly | null>(null);
+  const [regimeData, setRegimeData] = useState<RegimeData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -180,6 +213,11 @@ export default function Dashboard() {
   const fetchWeekly = async () => {
     const res = await fetch(`${API_URL}/api/weekly`);
     if (res.ok) setWeekly(await res.json());
+  };
+
+  const fetchRegime = async () => {
+    const res = await fetch(`${API_URL}/api/regime`);
+    if (res.ok) setRegimeData(await res.json());
   };
 
   const formatLocal = (ms: number | null | undefined) => {
@@ -244,12 +282,13 @@ export default function Dashboard() {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {(["decisions", "backtest", "brief", "weekly", "coach"] as const).map((t) => (
+        {(["decisions", "backtest", "regime", "brief", "weekly", "coach"] as const).map((t) => (
           <button key={t} onClick={() => {
             setTab(t);
             if (t === "brief") fetchBrief();
             if (t === "backtest") fetchBacktest();
             if (t === "weekly") fetchWeekly();
+            if (t === "regime") fetchRegime();
           }}
             style={{
               padding: "8px 16px", borderRadius: 8, border: "1px solid #2a2b3d", cursor: "pointer",
@@ -257,7 +296,8 @@ export default function Dashboard() {
               color: tab === t ? "#3b82f6" : "#a1a1aa", fontWeight: 600, fontSize: 13,
             }}>
             {t === "decisions" ? "Live Decisions"
-              : t === "backtest" ? "Backtest (180d)"
+              : t === "backtest" ? "Backtest (365d)"
+              : t === "regime" ? "Regime & News"
               : t === "brief" ? "Daily Brief"
               : t === "weekly" ? "Weekly Insights"
               : "Trading Coach"}
@@ -367,6 +407,94 @@ export default function Dashboard() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {tab === "regime" && (
+        <section>
+          {!regimeData ? (
+            <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24, color: "#52525b", textAlign: "center" }}>
+              Loading regime & news...
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                <StatCard
+                  label="BTC Macro Regime"
+                  value={regimeData.regime?.regime ?? "—"}
+                  sub={regimeData.regime ? `BTC $${regimeData.regime.btcPrice.toFixed(0)} | ADX ${regimeData.regime.adx.toFixed(1)}` : ""}
+                  color={regimeData.regime?.regime === "BULL" ? "#22c55e" : regimeData.regime?.regime === "BEAR" ? "#ef4444" : "#a1a1aa"}
+                />
+                <StatCard
+                  label="News Fear/Greed"
+                  value={regimeData.news ? `${regimeData.news.fearGreedProxy.toFixed(0)}/100` : "—"}
+                  sub={regimeData.news?.regime ?? ""}
+                  color={
+                    (regimeData.news?.fearGreedProxy ?? 50) >= 65 ? "#22c55e"
+                      : (regimeData.news?.fearGreedProxy ?? 50) <= 35 ? "#ef4444"
+                        : "#a1a1aa"
+                  }
+                />
+                <StatCard
+                  label="Net Sentiment"
+                  value={regimeData.news ? `${(regimeData.news.netSentiment * 100).toFixed(0)}%` : "—"}
+                  sub={`${regimeData.news?.itemCount ?? 0} headlines (24h)`}
+                  color={(regimeData.news?.netSentiment ?? 0) > 0 ? "#22c55e" : "#ef4444"}
+                />
+                <StatCard
+                  label="Critical News"
+                  value={regimeData.news ? `${regimeData.news.criticalNegative}- / ${regimeData.news.criticalPositive}+` : "—"}
+                  sub="Score ≤ -0.6 / ≥ +0.6"
+                />
+              </div>
+
+              {regimeData.regime && (
+                <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 16, marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>REGIME DETAIL</div>
+                  <div style={{ color: "#e4e4e7", fontSize: 13 }}>{regimeData.regime.reason}</div>
+                  <div style={{ color: "#52525b", fontSize: 11, marginTop: 4 }}>
+                    EMA21: ${regimeData.regime.ema21.toFixed(0)} | EMA55: ${regimeData.regime.ema55.toFixed(0)} | Diff: {regimeData.regime.diffPct.toFixed(2)}%
+                  </div>
+                </div>
+              )}
+
+              <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #1e1f2e", fontSize: 11, color: "#71717a", letterSpacing: 0.5 }}>
+                  TOP HEADLINES
+                </div>
+                {regimeData.headlines.length === 0 && (
+                  <div style={{ padding: 24, textAlign: "center", color: "#52525b" }}>No headlines fetched yet</div>
+                )}
+                {regimeData.headlines.map((h, i) => (
+                  <a key={i} href={h.url} target="_blank" rel="noopener noreferrer"
+                    style={{
+                      display: "block", padding: "12px 16px", borderBottom: "1px solid #1a1b2e",
+                      textDecoration: "none", color: "inherit", cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: "#71717a" }}>{h.source} · {new Date(h.publishedTs).toLocaleString()}</span>
+                      <span style={{
+                        fontSize: 11, padding: "2px 8px", borderRadius: 4,
+                        backgroundColor: h.sentimentScore > 0.2 ? "#22c55e22" : h.sentimentScore < -0.2 ? "#ef444422" : "#71717a22",
+                        color: h.sentimentScore > 0.2 ? "#22c55e" : h.sentimentScore < -0.2 ? "#ef4444" : "#a1a1aa",
+                      }}>
+                        {h.sentimentScore > 0 ? "+" : ""}{(h.sentimentScore * 100).toFixed(0)}% · {h.category}
+                      </span>
+                    </div>
+                    <div style={{ color: "#e4e4e7", fontSize: 13, lineHeight: 1.4 }}>{h.title}</div>
+                    {h.tickers.length > 0 && (
+                      <div style={{ marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {h.tickers.slice(0, 5).map(t => (
+                          <span key={t} style={{ fontSize: 10, color: "#3b82f6", backgroundColor: "#3b82f611", padding: "1px 6px", borderRadius: 3 }}>{t}</span>
+                        ))}
+                      </div>
+                    )}
+                  </a>
+                ))}
               </div>
             </>
           )}
