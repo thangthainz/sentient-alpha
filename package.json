@@ -14,6 +14,7 @@
     "engine:dev": "npm -w packages/engine run dev",
     "engine:paper": "npm -w packages/engine run paper",
     "engine:start": "npm -w packages/engine run start",
+    "engine:api": "npm -w packages/engine run api",
     "engine:backtest": "npm -w packages/engine run backtest",
     "dashboard:dev": "npm -w packages/dashboard run dev",
     "contracts:build": "npm -w packages/contracts run build",

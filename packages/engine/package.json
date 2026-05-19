@@ -9,6 +9,7 @@
     "dev": "TRADING_MODE=paper tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "paper": "TRADING_MODE=paper tsx src/index.ts",
+    "api": "TRADING_MODE=paper tsx src/api/server.ts",
     "backtest": "tsx src/backtest-cli.ts",
     "test": "vitest run"
   },

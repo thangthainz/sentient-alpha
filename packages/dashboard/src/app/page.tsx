@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3200";
 
 interface Decision {
   id: string;
   timestamp: number;
   pair: string;
   action: string;
-  score: { total: number; tier: string };
+  score: { total: number; tier: string; tiers?: Array<{ name: string; points: number; maxPoints: number }> };
   reason: string;
 }
 
@@ -20,17 +22,22 @@ interface AgentState {
   winRate: number;
   totalTrades: number;
   lastCycleTime: number;
+  mode: string;
+  paper: { totalTrades: number; winRate: number; totalPnl: number; maxDrawdown: number; currentCapital: number; profitFactor: number };
+  health: { overall: number; tradingAdjustment: number; warning?: string };
 }
 
-const MOCK_DECISIONS: Decision[] = [
-  { id: "d-1", timestamp: Date.now() - 300000, pair: "WMNT/USDC", action: "ENTRY", score: { total: 26, tier: "A" }, reason: "TREND_PULLBACK @ 0.4521 | R:R=2.1" },
-  { id: "d-2", timestamp: Date.now() - 240000, pair: "WETH/USDC", action: "SKIP", score: { total: 18, tier: "B" }, reason: "Score 18 < 22 threshold" },
-  { id: "d-3", timestamp: Date.now() - 180000, pair: "mETH/WMNT", action: "SKIP", score: { total: 14, tier: "C" }, reason: "ADX too low (19.2<25)" },
-  { id: "d-4", timestamp: Date.now() - 120000, pair: "USDT/USDC", action: "SKIP", score: { total: 8, tier: "F" }, reason: "no setup (insufficient data)" },
-  { id: "d-5", timestamp: Date.now() - 60000, pair: "WMNT/USDC", action: "ENTRY", score: { total: 29, tier: "S" }, reason: "LIQUIDITY_SWEEP @ 0.4489 | Wyckoff Spring confirmed" },
-];
+interface Brief {
+  fullText: string;
+  generatedAt: number;
+}
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+interface CoachResponse {
+  answer: string;
+  disclaimer: string;
+}
+
+function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div style={{
       background: "linear-gradient(135deg, #1a1b2e 0%, #16172a 100%)",
@@ -40,32 +47,21 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
       flex: "1 1 200px",
     }}>
       <div style={{ fontSize: 13, color: "#71717a", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, color: "#f4f4f5" }}>{value}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, color: color || "#f4f4f5" }}>{value}</div>
       {sub && <div style={{ fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>{sub}</div>}
     </div>
   );
 }
 
 function TierBadge({ tier }: { tier: string }) {
-  const colors: Record<string, string> = {
-    S: "#f59e0b", A: "#22c55e", B: "#3b82f6", C: "#a1a1aa", F: "#ef4444",
-  };
+  const colors: Record<string, string> = { S: "#f59e0b", A: "#22c55e", B: "#3b82f6", C: "#a1a1aa", F: "#ef4444" };
   return (
     <span style={{
-      display: "inline-block",
-      width: 28,
-      height: 28,
-      lineHeight: "28px",
-      textAlign: "center",
-      borderRadius: 6,
-      fontSize: 13,
-      fontWeight: 700,
-      backgroundColor: `${colors[tier] || "#555"}22`,
-      color: colors[tier] || "#555",
+      display: "inline-block", width: 28, height: 28, lineHeight: "28px", textAlign: "center",
+      borderRadius: 6, fontSize: 13, fontWeight: 700,
+      backgroundColor: `${colors[tier] || "#555"}22`, color: colors[tier] || "#555",
       border: `1px solid ${colors[tier] || "#555"}44`,
-    }}>
-      {tier}
-    </span>
+    }}>{tier}</span>
   );
 }
 
@@ -73,32 +69,65 @@ function ActionBadge({ action }: { action: string }) {
   const isEntry = action === "ENTRY";
   return (
     <span style={{
-      display: "inline-block",
-      padding: "2px 10px",
-      borderRadius: 20,
-      fontSize: 11,
-      fontWeight: 600,
+      display: "inline-block", padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
       backgroundColor: isEntry ? "#22c55e18" : "#71717a18",
       color: isEntry ? "#22c55e" : "#71717a",
       border: `1px solid ${isEntry ? "#22c55e33" : "#71717a33"}`,
-    }}>
-      {action}
-    </span>
+    }}>{action}</span>
   );
 }
 
 export default function Dashboard() {
-  const [decisions] = useState<Decision[]>(MOCK_DECISIONS);
-  const [agentState] = useState<AgentState>({
-    isRunning: true,
-    cycleCount: 47,
-    positions: [],
-    portfolioValue: 10842.5,
-    totalPnl: 842.5,
-    winRate: 0.58,
-    totalTrades: 23,
-    lastCycleTime: Date.now() - 30000,
-  });
+  const [state, setState] = useState<AgentState | null>(null);
+  const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [coachQ, setCoachQ] = useState("");
+  const [coachA, setCoachA] = useState<CoachResponse | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [tab, setTab] = useState<"decisions" | "brief" | "coach">("decisions");
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [stateRes, decisionsRes] = await Promise.all([
+        fetch(`${API_URL}/api/state`),
+        fetch(`${API_URL}/api/decisions?limit=30`),
+      ]);
+      if (stateRes.ok) setState(await stateRes.json());
+      if (decisionsRes.ok) setDecisions(await decisionsRes.json());
+      setError(null);
+    } catch {
+      setError("Cannot connect to API server. Run: npm run engine:api");
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const fetchBrief = async () => {
+    const res = await fetch(`${API_URL}/api/brief`);
+    if (res.ok) setBrief(await res.json());
+  };
+
+  const askCoach = async () => {
+    if (!coachQ.trim()) return;
+    setCoachLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/coach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: coachQ }),
+      });
+      if (res.ok) setCoachA(await res.json());
+    } finally {
+      setCoachLoading(false);
+    }
+  };
+
+  const pnlColor = (state?.totalPnl ?? 0) >= 0 ? "#22c55e" : "#ef4444";
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 24px" }}>
@@ -106,115 +135,129 @@ export default function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
           <div style={{
             width: 10, height: 10, borderRadius: "50%",
-            backgroundColor: agentState.isRunning ? "#22c55e" : "#ef4444",
-            boxShadow: agentState.isRunning ? "0 0 8px #22c55e88" : "none",
+            backgroundColor: state?.isRunning ? "#22c55e" : error ? "#ef4444" : "#f59e0b",
+            boxShadow: state?.isRunning ? "0 0 8px #22c55e88" : "none",
           }} />
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>Sentient Alpha</h1>
-          <span style={{ fontSize: 13, color: "#71717a", marginLeft: 8 }}>
-            Autonomous AI Trading Agent on Mantle L2
-          </span>
+          {state && (
+            <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, backgroundColor: "#3b82f622", color: "#3b82f6", border: "1px solid #3b82f644" }}>
+              {state.mode.toUpperCase()}
+            </span>
+          )}
         </div>
         <div style={{ fontSize: 12, color: "#52525b" }}>
-          ERC-8004 Identity | 33-Point Signal Confluence | Bayesian Risk Engine | Multi-DEX Execution
+          Autonomous AI Trading Agent on Mantle L2 | ERC-8004 Identity | 33-Point Signal Confluence
         </div>
+        {error && <div style={{ marginTop: 8, fontSize: 12, color: "#ef4444" }}>{error}</div>}
+        {state?.health?.warning && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b", padding: "6px 12px", backgroundColor: "#f59e0b11", borderRadius: 6, border: "1px solid #f59e0b33" }}>
+            {state.health.warning}
+          </div>
+        )}
       </header>
 
-      <section style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
-        <StatCard label="Portfolio Value" value={`$${agentState.portfolioValue.toLocaleString()}`} sub={`+$${agentState.totalPnl.toFixed(2)} PnL`} />
-        <StatCard label="Win Rate" value={`${(agentState.winRate * 100).toFixed(0)}%`} sub={`${agentState.totalTrades} trades`} />
-        <StatCard label="Cycle" value={`#${agentState.cycleCount}`} sub="60s interval" />
-        <StatCard label="Active Positions" value={`${agentState.positions.length}`} sub="max 3 concurrent" />
-      </section>
+      {state && (
+        <section style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 32 }}>
+          <StatCard label="Portfolio" value={`$${state.paper.currentCapital.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub={`${state.totalPnl >= 0 ? "+" : ""}$${state.totalPnl.toFixed(2)} PnL`} color={pnlColor} />
+          <StatCard label="Win Rate" value={`${(state.paper.winRate * 100).toFixed(1)}%`} sub={`${state.paper.totalTrades} trades | PF ${state.paper.profitFactor.toFixed(2)}`} />
+          <StatCard label="Max Drawdown" value={`${state.paper.maxDrawdown.toFixed(1)}%`} sub={`Cycle #${state.cycleCount}`} />
+          <StatCard label="Health" value={`${state.health.overall}/100`} sub={`Adj: ${state.health.tradingAdjustment}x`} color={state.health.overall >= 60 ? "#22c55e" : "#f59e0b"} />
+        </section>
+      )}
 
-      <section>
-        <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Decision Timeline</h2>
-        <div style={{
-          background: "#111218",
-          borderRadius: 12,
-          border: "1px solid #1e1f2e",
-          overflow: "hidden",
-        }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #1e1f2e" }}>
-                {["Time", "Pair", "Action", "Score", "Reason"].map((h) => (
-                  <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#71717a", fontWeight: 500, fontSize: 12 }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {decisions.map((d) => (
-                <tr key={d.id} style={{ borderBottom: "1px solid #1a1b2e" }}>
-                  <td style={{ padding: "10px 16px", color: "#a1a1aa", fontSize: 12 }}>
-                    {new Date(d.timestamp).toLocaleTimeString()}
-                  </td>
-                  <td style={{ padding: "10px 16px", fontWeight: 600 }}>{d.pair}</td>
-                  <td style={{ padding: "10px 16px" }}><ActionBadge action={d.action} /></td>
-                  <td style={{ padding: "10px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <TierBadge tier={d.score.tier} />
-                      <span style={{ color: "#a1a1aa", fontSize: 12 }}>{d.score.total}/33</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: "10px 16px", color: "#a1a1aa", fontSize: 12, maxWidth: 300 }}>
-                    {d.reason}
-                  </td>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {(["decisions", "brief", "coach"] as const).map((t) => (
+          <button key={t} onClick={() => { setTab(t); if (t === "brief") fetchBrief(); }}
+            style={{
+              padding: "8px 16px", borderRadius: 8, border: "1px solid #2a2b3d", cursor: "pointer",
+              backgroundColor: tab === t ? "#3b82f622" : "transparent",
+              color: tab === t ? "#3b82f6" : "#a1a1aa", fontWeight: 600, fontSize: 13,
+            }}>
+            {t === "decisions" ? "Decisions" : t === "brief" ? "Daily Brief" : "Trading Coach"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "decisions" && (
+        <section>
+          <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #1e1f2e" }}>
+                  {["Time", "Pair", "Action", "Score", "Reason"].map((h) => (
+                    <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "#71717a", fontWeight: 500, fontSize: 12 }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {decisions.length === 0 && (
+                  <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "#52525b" }}>Waiting for first cycle...</td></tr>
+                )}
+                {decisions.slice().reverse().map((d) => (
+                  <tr key={d.id} style={{ borderBottom: "1px solid #1a1b2e" }}>
+                    <td style={{ padding: "10px 16px", color: "#a1a1aa", fontSize: 12 }}>{new Date(d.timestamp).toLocaleTimeString()}</td>
+                    <td style={{ padding: "10px 16px", fontWeight: 600 }}>{d.pair}</td>
+                    <td style={{ padding: "10px 16px" }}><ActionBadge action={d.action} /></td>
+                    <td style={{ padding: "10px 16px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <TierBadge tier={d.score.tier} />
+                        <span style={{ color: "#a1a1aa", fontSize: 12 }}>{d.score.total}/33</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 16px", color: "#a1a1aa", fontSize: 12, maxWidth: 300 }}>{d.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
-      <section style={{ marginTop: 32 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Signal Heatmap</h2>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 12,
-        }}>
-          {[
-            { name: "Trend Alignment", value: 2, max: 2 },
-            { name: "ADX Strength", value: 2, max: 2 },
-            { name: "RSI Zone", value: 1, max: 1 },
-            { name: "Supertrend", value: 2, max: 2 },
-            { name: "Choppiness Clear", value: 1, max: 1 },
-            { name: "Setup Confidence", value: 5, max: 5 },
-            { name: "Risk/Reward", value: 2, max: 2 },
-            { name: "Near Demand Zone", value: 2, max: 2 },
-            { name: "Zone Strength", value: 1, max: 1 },
-            { name: "Volume Surge", value: 2, max: 2 },
-            { name: "DI Bullish", value: 1, max: 1 },
-            { name: "TVL Growth", value: 2, max: 2 },
-            { name: "Sentiment", value: 2, max: 2 },
-            { name: "Whale Inflow", value: 2, max: 2 },
-          ].map((s) => {
-            const pct = s.value / s.max;
-            const hue = pct > 0.7 ? 142 : pct > 0.3 ? 45 : 0;
-            return (
-              <div key={s.name} style={{
-                background: `hsla(${hue}, 60%, 40%, 0.12)`,
-                border: `1px solid hsla(${hue}, 60%, 40%, 0.25)`,
-                borderRadius: 8,
-                padding: "12px 14px",
-              }}>
-                <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>{s.name}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: `hsl(${hue}, 60%, 65%)` }}>
-                  {s.value}/{s.max}
-                </div>
+      {tab === "brief" && (
+        <section style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24 }}>
+          {brief ? (
+            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: 13, color: "#e4e4e7", margin: 0, lineHeight: 1.6 }}>
+              {brief.fullText}
+            </pre>
+          ) : (
+            <div style={{ color: "#52525b", textAlign: "center" }}>Loading daily brief...</div>
+          )}
+        </section>
+      )}
+
+      {tab === "coach" && (
+        <section style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <input
+              value={coachQ}
+              onChange={(e) => setCoachQ(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && askCoach()}
+              placeholder="Ask the Trading Coach (e.g. Should I hold my WMNT position?)"
+              style={{
+                width: "100%", padding: "12px 16px", borderRadius: 8, border: "1px solid #2a2b3d",
+                backgroundColor: "#0a0b0d", color: "#e4e4e7", fontSize: 14, outline: "none",
+              }}
+            />
+            <button onClick={askCoach} disabled={coachLoading}
+              style={{ marginTop: 8, padding: "8px 20px", borderRadius: 8, border: "none", backgroundColor: "#3b82f6", color: "#fff", fontWeight: 600, cursor: "pointer", opacity: coachLoading ? 0.5 : 1 }}>
+              {coachLoading ? "Thinking..." : "Ask Coach"}
+            </button>
+          </div>
+          {coachA && (
+            <div>
+              <div style={{ fontSize: 11, color: "#f59e0b", marginBottom: 12, padding: "6px 10px", backgroundColor: "#f59e0b11", borderRadius: 4 }}>
+                {coachA.disclaimer}
               </div>
-            );
-          })}
-        </div>
-        <div style={{ marginTop: 12, fontSize: 13, color: "#52525b" }}>
-          Total: 27/33 (Tier A) — ENTRY signal active
-        </div>
-      </section>
+              <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 14, color: "#e4e4e7", margin: 0, lineHeight: 1.6 }}>
+                {coachA.answer}
+              </pre>
+            </div>
+          )}
+        </section>
+      )}
 
       <footer style={{ marginTop: 48, padding: "16px 0", borderTop: "1px solid #1e1f2e", fontSize: 12, color: "#3f3f46" }}>
-        Sentient Alpha v0.1.0 | Mantle L2 | ERC-8004 Agent Identity | Built for Mantle Turing Test Hackathon
+        Sentient Alpha v0.1.0 | Mantle L2 | Paper Trading Mode | Built for Mantle Turing Test Hackathon
       </footer>
     </div>
   );
