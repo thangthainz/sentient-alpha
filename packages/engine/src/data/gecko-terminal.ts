@@ -38,13 +38,23 @@ export async function fetchOhlcv(
   const agg = TF_AGG[timeframe];
   const url = `${BASE}/networks/${NETWORK}/pools/${poolAddress}/ohlcv/${tf}?aggregate=${agg}&limit=${limit}`;
 
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-  });
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (res.ok) break;
+    if (res.status === 429) {
+      if (cached && attempt === 3) return cached.data;
+      const backoff = (attempt + 1) * 15000;
+      console.log(`[GeckoTerminal] 429 rate limit, retry in ${backoff/1000}s (attempt ${attempt + 1}/4)`);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
+    }
+    break;
+  }
 
-  if (!res.ok) {
-    if (res.status === 429 && cached) return cached.data;
-    throw new Error(`GeckoTerminal OHLCV error (${res.status}): ${await res.text()}`);
+  if (!res || !res.ok) {
+    if (cached) return cached.data;
+    throw new Error(`GeckoTerminal OHLCV error (${res?.status}): ${await res?.text()}`);
   }
 
   const data = await res.json() as any;

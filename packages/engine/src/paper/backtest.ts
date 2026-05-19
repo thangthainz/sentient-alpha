@@ -100,7 +100,7 @@ export function runBacktest(
       pair,
     });
 
-    if (!score.pass || score.total < cfg.entryThreshold) continue;
+    if (score.total < cfg.entryThreshold) continue;
 
     const tradeCheck = risk.shouldTrade(setup.type);
     if (!tradeCheck.allowed) continue;

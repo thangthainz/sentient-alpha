@@ -6,6 +6,7 @@ import { TradingMemoryStore } from "./memory/store.js";
 async function main() {
   const poolArg = process.argv[2];
   const daysArg = parseInt(process.argv[3] ?? "30", 10);
+  const thresholdArg = process.argv[4] ? parseInt(process.argv[4], 10) : undefined;
 
   console.log("==========================================");
   console.log("  Sentient Alpha — Backtest Engine");
@@ -50,9 +51,21 @@ async function main() {
     maxConcurrentPositions: 3,
     slippageBps: 50,
     commissionBps: 30,
+    ...(thresholdArg !== undefined ? { entryThreshold: thresholdArg } : {}),
   });
 
   console.log(formatBacktestReport(result, poolName));
+
+  // Signal distribution
+  if (result.signals.length > 0) {
+    const byTier = new Map<string, number>();
+    for (const s of result.signals) byTier.set(s.tier, (byTier.get(s.tier) ?? 0) + 1);
+    console.log("\n  SIGNAL DISTRIBUTION");
+    console.log("  -----------------------");
+    for (const [tier, count] of byTier) console.log(`  Tier ${tier}: ${count} signals`);
+    const maxScore = result.signals.reduce((m, s) => Math.max(m, s.score), 0);
+    console.log(`  Max score observed: ${maxScore}/33`);
+  }
 
   // Save insights if significant
   if (result.stats.totalTrades >= 5) {

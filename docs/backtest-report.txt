@@ -1,0 +1,51 @@
+==========================================
+  Sentient Alpha — Backtest Engine
+==========================================
+
+[MEMORY] 0 memories loaded
+
+[BACKTEST] Pool: 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 (0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24)
+[BACKTEST] Fetching 1440 1h candles...
+
+[GeckoTerminal] 429 rate limit, retry in 15s (attempt 1/4)
+[DATA] 1h candles: 1000 | 4h candles: 360
+[BACKTEST] Running...
+
+[PAPER] OPEN LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.340196 | Size: $62.88 | SL: 0.294259 TP: 0.426992
+[PAPER] OPEN LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.350681 | Size: $60.61 | SL: 0.301922 TP: 0.442964
+[PAPER] CLOSE 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.437599 | TAKE_PROFIT | PnL: +$18.00 (28.63%)
+[PAPER] CLOSE 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.462310 | TAKE_PROFIT | PnL: +$19.29 (31.83%)
+[PAPER] OPEN LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.466245 | Size: $60.07 | SL: 0.425985 TP: 0.539805
+[PAPER] CLOSE 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.558109 | TAKE_PROFIT | PnL: +$11.84 (19.70%)
+[PAPER] OPEN LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.693278 | Size: $61.67 | SL: 0.648689 TP: 0.772109
+[PAPER] CLOSE 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.790673 | TAKE_PROFIT | PnL: +$8.66 (14.05%)
+
+==================================================
+  BACKTEST REPORT — 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24
+==================================================
+
+  Capital: $10,000 → $10057.79
+  Total PnL: +$57.79 (+0.58%)
+  Max Drawdown: 0.00%
+
+  Trades: 4 (4W / 0L)
+  Win Rate: 100.0%
+  Avg Win: $14.45  |  Avg Loss: $0.00
+  Profit Factor: 0.00
+  Sharpe (est): 0.00
+
+  Candles: 790  |  Signals: 4
+  Duration: 42ms
+==================================================
+
+  TRADE LOG:
+  2026-05-19T07:10 LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.340196 → 0.437599 | TAKE_PROFIT | +$18.00 | Score: 17/33 (B)
+  2026-05-19T07:10 LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.350681 → 0.462310 | TAKE_PROFIT | +$19.29 | Score: 14/33 (C)
+  2026-05-19T07:10 LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.466245 → 0.558109 | TAKE_PROFIT | +$11.84 | Score: 13/33 (C)
+  2026-05-19T07:10 LONG 0xdc16ff7d202bae83b35fd7cdbba28be6b8b13f24 @ 0.693278 → 0.790673 | TAKE_PROFIT | +$8.66 | Score: 15/33 (C)
+
+  SIGNAL DISTRIBUTION
+  -----------------------
+  Tier B: 1 signals
+  Tier C: 3 signals
+  Max score observed: 17/33
