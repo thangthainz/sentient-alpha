@@ -30,6 +30,21 @@ interface AgentState {
 interface Brief {
   fullText: string;
   generatedAt: number;
+  nextRun?: number | null;
+  source?: string;
+}
+
+interface Weekly {
+  formatted: string;
+  weekStart: string;
+  weekEnd: string;
+  generatedAt: number;
+  nextRun?: number | null;
+  performance: { trades: number; winRate: number; totalPnl: number; avgHoldTime: number };
+  patterns: Array<{ pattern: string; suggestion: string; confidence: number }>;
+  healthCorrelation?: string;
+  recommendations: string[];
+  summary: string;
 }
 
 interface CoachResponse {
@@ -127,8 +142,9 @@ export default function Dashboard() {
   const [coachQ, setCoachQ] = useState("");
   const [coachA, setCoachA] = useState<CoachResponse | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
-  const [tab, setTab] = useState<"decisions" | "brief" | "coach" | "backtest">("decisions");
+  const [tab, setTab] = useState<"decisions" | "brief" | "weekly" | "coach" | "backtest">("decisions");
   const [backtest, setBacktest] = useState<BacktestData | null>(null);
+  const [weekly, setWeekly] = useState<Weekly | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -159,6 +175,19 @@ export default function Dashboard() {
   const fetchBacktest = async () => {
     const res = await fetch(`${API_URL}/api/backtest`);
     if (res.ok) setBacktest(await res.json());
+  };
+
+  const fetchWeekly = async () => {
+    const res = await fetch(`${API_URL}/api/weekly`);
+    if (res.ok) setWeekly(await res.json());
+  };
+
+  const formatLocal = (ms: number | null | undefined) => {
+    if (!ms) return "—";
+    return new Date(ms).toLocaleString(undefined, {
+      weekday: "short", year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
   };
 
   const askCoach = async () => {
@@ -215,18 +244,23 @@ export default function Dashboard() {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {(["decisions", "backtest", "brief", "coach"] as const).map((t) => (
+        {(["decisions", "backtest", "brief", "weekly", "coach"] as const).map((t) => (
           <button key={t} onClick={() => {
             setTab(t);
             if (t === "brief") fetchBrief();
             if (t === "backtest") fetchBacktest();
+            if (t === "weekly") fetchWeekly();
           }}
             style={{
               padding: "8px 16px", borderRadius: 8, border: "1px solid #2a2b3d", cursor: "pointer",
               backgroundColor: tab === t ? "#3b82f622" : "transparent",
               color: tab === t ? "#3b82f6" : "#a1a1aa", fontWeight: 600, fontSize: 13,
             }}>
-            {t === "decisions" ? "Live Decisions" : t === "backtest" ? "Backtest (180d)" : t === "brief" ? "Daily Brief" : "Trading Coach"}
+            {t === "decisions" ? "Live Decisions"
+              : t === "backtest" ? "Backtest (180d)"
+              : t === "brief" ? "Daily Brief"
+              : t === "weekly" ? "Weekly Insights"
+              : "Trading Coach"}
           </button>
         ))}
       </div>
@@ -342,11 +376,93 @@ export default function Dashboard() {
       {tab === "brief" && (
         <section style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24 }}>
           {brief ? (
-            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: 13, color: "#e4e4e7", margin: 0, lineHeight: 1.6 }}>
-              {brief.fullText}
-            </pre>
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid #1e1f2e", fontSize: 12 }}>
+                <span style={{ color: "#71717a" }}>
+                  Generated: <span style={{ color: "#a1a1aa" }}>{formatLocal(brief.generatedAt)}</span>
+                </span>
+                <span style={{ color: "#71717a" }}>
+                  Next: <span style={{ color: "#a1a1aa" }}>{formatLocal(brief.nextRun)}</span> (7:00 AM local)
+                </span>
+              </div>
+              <pre style={{ whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: 13, color: "#e4e4e7", margin: 0, lineHeight: 1.6 }}>
+                {brief.fullText}
+              </pre>
+            </>
           ) : (
             <div style={{ color: "#52525b", textAlign: "center" }}>Loading daily brief...</div>
+          )}
+        </section>
+      )}
+
+      {tab === "weekly" && (
+        <section>
+          {!weekly ? (
+            <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24, color: "#52525b", textAlign: "center" }}>
+              Loading weekly insights...
+            </div>
+          ) : (
+            <>
+              <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 16, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+                <span style={{ color: "#71717a" }}>
+                  Generated: <span style={{ color: "#a1a1aa" }}>{formatLocal(weekly.generatedAt)}</span>
+                </span>
+                <span style={{ color: "#71717a" }}>
+                  Next: <span style={{ color: "#a1a1aa" }}>{formatLocal(weekly.nextRun)}</span> (Sun 10:00 PM local)
+                </span>
+              </div>
+
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                <StatCard label="Week Trades" value={`${weekly.performance.trades}`} />
+                <StatCard
+                  label="Week Win Rate"
+                  value={`${(weekly.performance.winRate * 100).toFixed(1)}%`}
+                  color={weekly.performance.winRate >= 0.5 ? "#22c55e" : "#ef4444"}
+                />
+                <StatCard
+                  label="Week PnL"
+                  value={`${weekly.performance.totalPnl >= 0 ? "+" : ""}$${weekly.performance.totalPnl.toFixed(2)}`}
+                  color={weekly.performance.totalPnl >= 0 ? "#22c55e" : "#ef4444"}
+                />
+                <StatCard label="Avg Hold" value={`${weekly.performance.avgHoldTime.toFixed(1)}h`} />
+              </div>
+
+              <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: "#71717a", marginBottom: 8, letterSpacing: 0.5 }}>SUMMARY</div>
+                <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.6 }}>{weekly.summary}</div>
+              </div>
+
+              {weekly.patterns.length > 0 && (
+                <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24, marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: "#71717a", marginBottom: 12, letterSpacing: 0.5 }}>PATTERNS DETECTED</div>
+                  {weekly.patterns.map((p, i) => (
+                    <div key={i} style={{ marginBottom: 12, paddingLeft: 12, borderLeft: "2px solid #3b82f6" }}>
+                      <div style={{ color: "#e4e4e7", fontSize: 13, fontWeight: 500 }}>{p.pattern}</div>
+                      <div style={{ color: "#a1a1aa", fontSize: 12, marginTop: 4 }}>→ {p.suggestion}</div>
+                      <div style={{ color: "#52525b", fontSize: 11, marginTop: 2 }}>Confidence: {(p.confidence * 100).toFixed(0)}%</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {weekly.healthCorrelation && (
+                <div style={{ background: "#f59e0b11", borderRadius: 12, border: "1px solid #f59e0b33", padding: 24, marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, color: "#f59e0b", marginBottom: 8, letterSpacing: 0.5 }}>HEALTH CORRELATION</div>
+                  <div style={{ color: "#e4e4e7", fontSize: 13, lineHeight: 1.6 }}>{weekly.healthCorrelation}</div>
+                </div>
+              )}
+
+              {weekly.recommendations.length > 0 && (
+                <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24 }}>
+                  <div style={{ fontSize: 11, color: "#71717a", marginBottom: 12, letterSpacing: 0.5 }}>RECOMMENDATIONS</div>
+                  {weekly.recommendations.map((r, i) => (
+                    <div key={i} style={{ color: "#e4e4e7", fontSize: 13, marginBottom: 8, paddingLeft: 16, position: "relative" }}>
+                      <span style={{ position: "absolute", left: 0, color: "#22c55e" }}>→</span> {r}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
       )}

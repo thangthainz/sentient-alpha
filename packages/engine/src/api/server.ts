@@ -91,18 +91,40 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // Daily brief
+    // Daily brief (returns scheduler-cached version, or generates ad-hoc if missing)
     if (path === "/api/brief" && req.method === "GET") {
+      const cached = agent.getCachedBrief();
+      const schedule = agent.getScheduleInfo();
+      if (cached) {
+        return json(res, {
+          fullText: cached.fullText,
+          generatedAt: cached.generatedAt,
+          nextRun: schedule.daily_brief?.nextRun ?? null,
+          source: "scheduled",
+        });
+      }
+      // Fallback: generate on demand if scheduler hasn't fired yet
       const portfolio = agent.getPaperPortfolio();
       const decisions = agent.getDecisions(100);
       const insights = agent.getInsights();
       const healthScore = health.getLatestScore();
       const brief = generateDailyBrief(portfolio, decisions, insights, healthScore.overall);
-      return json(res, brief);
+      return json(res, { ...brief, nextRun: schedule.daily_brief?.nextRun ?? null, source: "ad_hoc" });
     }
 
-    // Weekly report
+    // Weekly insights (returns scheduler-cached version, or generates ad-hoc if missing)
     if (path === "/api/weekly" && req.method === "GET") {
+      const cached = agent.getCachedWeekly();
+      const schedule = agent.getScheduleInfo();
+      if (cached) {
+        return json(res, {
+          ...cached.report,
+          formatted: cached.formatted,
+          generatedAt: cached.generatedAt,
+          nextRun: schedule.weekly_insights?.nextRun ?? null,
+          source: "scheduled",
+        });
+      }
       const portfolio = agent.getPaperPortfolio();
       const memories = agent.searchMemory("");
       const report = generateWeeklyReport(
@@ -112,7 +134,17 @@ const server = createServer(async (req, res) => {
         portfolio.currentCapital,
         portfolio.initialCapital
       );
-      return json(res, { ...report, formatted: formatWeeklyReport(report) });
+      return json(res, {
+        ...report,
+        formatted: formatWeeklyReport(report),
+        nextRun: schedule.weekly_insights?.nextRun ?? null,
+        source: "ad_hoc",
+      });
+    }
+
+    // Schedule info
+    if (path === "/api/schedule" && req.method === "GET") {
+      return json(res, agent.getScheduleInfo());
     }
 
     // Trading Coach

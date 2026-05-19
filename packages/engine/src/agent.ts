@@ -14,6 +14,10 @@ import { DexExecutor } from "./execution/dex.js";
 import { PaperTrader } from "./paper/tracker.js";
 import { seedPaperTrader } from "./paper/seed.js";
 import type { SeedResult } from "./paper/seed.js";
+import { LocalScheduler } from "./scheduler/scheduler.js";
+import { generateDailyBrief } from "./brief/daily-brief.js";
+import { generateWeeklyReport, formatWeeklyReport } from "./memory/weekly-insights.js";
+import { HealthTracker } from "./health/health-tracker.js";
 import { TradingMemoryStore } from "./memory/store.js";
 import { TradingLearner } from "./memory/learner.js";
 import { fetchOhlcv, fetchTopPools } from "./data/gecko-terminal.js";
@@ -33,6 +37,10 @@ export class SentientAlphaAgent {
 
   private watchedPools: Array<{ address: string; name: string }> = [];
   private seedResult: SeedResult | null = null;
+  private scheduler: LocalScheduler = new LocalScheduler();
+  private health: HealthTracker = new HealthTracker();
+  private cachedBrief: { fullText: string; generatedAt: number; nextRun?: number } | null = null;
+  private cachedWeekly: { report: ReturnType<typeof generateWeeklyReport>; formatted: string; generatedAt: number; nextRun?: number } | null = null;
 
   constructor(mode: AgentMode = "paper") {
     const rpcUrl = process.env.MANTLE_RPC_URL || "https://rpc.mantle.xyz";
@@ -97,6 +105,14 @@ export class SentientAlphaAgent {
         console.error(`[SEED] Failed: ${err.message} (continuing without seed)`);
       }
     }
+
+    // Register scheduled tasks (local timezone of the user's machine)
+    this.scheduler.registerDaily("daily_brief", 7, 0, () => this.generateAndCacheBrief());
+    this.scheduler.registerWeeklySunday("weekly_insights", 22, 0, () => this.generateAndCacheWeekly());
+
+    // First-boot: generate one of each so the dashboard has content immediately
+    await this.generateAndCacheBrief();
+    await this.generateAndCacheWeekly();
 
     console.log(`\n[LOOP] Starting autonomous loop (${ENGINE.CYCLE_INTERVAL_MS / 1000}s interval)\n`);
     await this.runCycle();
@@ -319,5 +335,61 @@ export class SentientAlphaAgent {
 
   getSeedResult(): SeedResult | null {
     return this.seedResult;
+  }
+
+  // ---- Scheduled brief / weekly ----
+
+  private async generateAndCacheBrief(): Promise<void> {
+    const portfolio = this.paper.getPortfolio();
+    const decisions = this.state.decisions.slice(-100);
+    const insights = this.memory.getInsights();
+    const healthScore = this.health.getLatestScore().overall;
+
+    const brief = generateDailyBrief(portfolio, decisions, insights, healthScore);
+    const info = this.scheduler.getTaskInfo("daily_brief");
+    this.cachedBrief = {
+      fullText: brief.fullText,
+      generatedAt: Date.now(),
+      nextRun: info?.nextRun,
+    };
+    console.log(`[SCHEDULER] Daily brief generated at ${new Date().toLocaleString()}`);
+  }
+
+  private async generateAndCacheWeekly(): Promise<void> {
+    const portfolio = this.paper.getPortfolio();
+    const memories = this.memory.search("");
+    const healthHistory = this.health.getHistory();
+
+    const report = generateWeeklyReport(
+      portfolio.closedTrades,
+      memories,
+      healthHistory,
+      portfolio.currentCapital,
+      portfolio.initialCapital
+    );
+    const formatted = formatWeeklyReport(report);
+    const info = this.scheduler.getTaskInfo("weekly_insights");
+    this.cachedWeekly = {
+      report,
+      formatted,
+      generatedAt: Date.now(),
+      nextRun: info?.nextRun,
+    };
+    console.log(`[SCHEDULER] Weekly insights generated at ${new Date().toLocaleString()}`);
+  }
+
+  getCachedBrief() {
+    return this.cachedBrief;
+  }
+
+  getCachedWeekly() {
+    return this.cachedWeekly;
+  }
+
+  getScheduleInfo() {
+    return {
+      daily_brief: this.scheduler.getTaskInfo("daily_brief"),
+      weekly_insights: this.scheduler.getTaskInfo("weekly_insights"),
+    };
   }
 }
