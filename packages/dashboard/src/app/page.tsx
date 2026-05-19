@@ -37,6 +37,49 @@ interface CoachResponse {
   disclaimer: string;
 }
 
+interface BacktestTrade {
+  id: string;
+  pair: string;
+  direction: string;
+  entryPrice: number;
+  exitPrice?: number;
+  entryTime: number;
+  exitTime?: number;
+  pnl?: number;
+  pnlPct?: number;
+  win?: boolean;
+  exitReason?: string;
+  score: { total: number; tier: string };
+}
+
+interface BacktestData {
+  seed: {
+    totalTrades: number;
+    totalPnl: number;
+    winRate: number;
+    byPool: Record<string, { trades: number; pnl: number; winRate: number }>;
+    startTime: number;
+    endTime: number;
+  } | null;
+  portfolio: {
+    initialCapital: number;
+    currentCapital: number;
+    totalPnl: number;
+    maxDrawdown: number;
+    winCount: number;
+    lossCount: number;
+  };
+  trades: BacktestTrade[];
+  stats: {
+    totalTrades: number;
+    winRate: number;
+    profitFactor: number;
+    sharpeEstimate: number;
+    avgWin: number;
+    avgLoss: number;
+  };
+}
+
 function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div style={{
@@ -84,7 +127,8 @@ export default function Dashboard() {
   const [coachQ, setCoachQ] = useState("");
   const [coachA, setCoachA] = useState<CoachResponse | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
-  const [tab, setTab] = useState<"decisions" | "brief" | "coach">("decisions");
+  const [tab, setTab] = useState<"decisions" | "brief" | "coach" | "backtest">("decisions");
+  const [backtest, setBacktest] = useState<BacktestData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -110,6 +154,11 @@ export default function Dashboard() {
   const fetchBrief = async () => {
     const res = await fetch(`${API_URL}/api/brief`);
     if (res.ok) setBrief(await res.json());
+  };
+
+  const fetchBacktest = async () => {
+    const res = await fetch(`${API_URL}/api/backtest`);
+    if (res.ok) setBacktest(await res.json());
   };
 
   const askCoach = async () => {
@@ -166,14 +215,18 @@ export default function Dashboard() {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {(["decisions", "brief", "coach"] as const).map((t) => (
-          <button key={t} onClick={() => { setTab(t); if (t === "brief") fetchBrief(); }}
+        {(["decisions", "backtest", "brief", "coach"] as const).map((t) => (
+          <button key={t} onClick={() => {
+            setTab(t);
+            if (t === "brief") fetchBrief();
+            if (t === "backtest") fetchBacktest();
+          }}
             style={{
               padding: "8px 16px", borderRadius: 8, border: "1px solid #2a2b3d", cursor: "pointer",
               backgroundColor: tab === t ? "#3b82f622" : "transparent",
               color: tab === t ? "#3b82f6" : "#a1a1aa", fontWeight: 600, fontSize: 13,
             }}>
-            {t === "decisions" ? "Decisions" : t === "brief" ? "Daily Brief" : "Trading Coach"}
+            {t === "decisions" ? "Live Decisions" : t === "backtest" ? "Backtest (180d)" : t === "brief" ? "Daily Brief" : "Trading Coach"}
           </button>
         ))}
       </div>
@@ -210,6 +263,79 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+        </section>
+      )}
+
+      {tab === "backtest" && (
+        <section>
+          {!backtest ? (
+            <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 24, color: "#52525b", textAlign: "center" }}>
+              Loading backtest replay...
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                <StatCard label="Total Trades" value={`${backtest.stats.totalTrades}`} sub={`${backtest.portfolio.winCount}W / ${backtest.portfolio.lossCount}L`} />
+                <StatCard label="Win Rate" value={`${(backtest.stats.winRate * 100).toFixed(1)}%`} sub={`PF: ${backtest.stats.profitFactor.toFixed(2)}`} color={backtest.stats.winRate >= 0.5 ? "#22c55e" : "#ef4444"} />
+                <StatCard label="Total PnL" value={`${backtest.portfolio.totalPnl >= 0 ? "+" : ""}$${backtest.portfolio.totalPnl.toFixed(2)}`} sub={`${((backtest.portfolio.totalPnl / backtest.portfolio.initialCapital) * 100).toFixed(2)}%`} color={backtest.portfolio.totalPnl >= 0 ? "#22c55e" : "#ef4444"} />
+                <StatCard label="Max Drawdown" value={`${(backtest.portfolio.maxDrawdown * 100).toFixed(2)}%`} sub={`Sharpe est: ${backtest.stats.sharpeEstimate.toFixed(2)}`} />
+              </div>
+
+              {backtest.seed && (
+                <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", padding: 16, marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: "#71717a", marginBottom: 8 }}>
+                    HISTORICAL REPLAY ({new Date(backtest.seed.startTime).toLocaleDateString()} → {new Date(backtest.seed.endTime).toLocaleDateString()})
+                  </div>
+                  <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                    {Object.entries(backtest.seed.byPool).map(([pool, stat]) => (
+                      <div key={pool} style={{ fontSize: 13 }}>
+                        <div style={{ color: "#a1a1aa" }}>{pool}</div>
+                        <div style={{ color: "#e4e4e7", fontWeight: 600 }}>
+                          {stat.trades} trades · {(stat.winRate * 100).toFixed(0)}% WR · {stat.pnl >= 0 ? "+" : ""}${stat.pnl.toFixed(2)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ background: "#111218", borderRadius: 12, border: "1px solid #1e1f2e", overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #1e1f2e" }}>
+                      {["Time", "Pair", "Side", "Entry", "Exit", "PnL", "Exit Reason", "Score"].map((h) => (
+                        <th key={h} style={{ padding: "10px 12px", textAlign: "left", color: "#71717a", fontWeight: 500, fontSize: 11 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backtest.trades.length === 0 && (
+                      <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: "#52525b" }}>No trades in replay</td></tr>
+                    )}
+                    {backtest.trades.slice().reverse().map((t) => (
+                      <tr key={t.id} style={{ borderBottom: "1px solid #1a1b2e" }}>
+                        <td style={{ padding: "8px 12px", color: "#a1a1aa", fontSize: 11 }}>{new Date(t.entryTime).toLocaleDateString()}</td>
+                        <td style={{ padding: "8px 12px", fontWeight: 600, fontSize: 11 }}>{t.pair.length > 16 ? `${t.pair.slice(0, 6)}...${t.pair.slice(-4)}` : t.pair}</td>
+                        <td style={{ padding: "8px 12px", color: t.direction === "LONG" ? "#22c55e" : "#ef4444", fontWeight: 600 }}>{t.direction}</td>
+                        <td style={{ padding: "8px 12px", color: "#a1a1aa" }}>${t.entryPrice.toFixed(4)}</td>
+                        <td style={{ padding: "8px 12px", color: "#a1a1aa" }}>{t.exitPrice ? `$${t.exitPrice.toFixed(4)}` : "-"}</td>
+                        <td style={{ padding: "8px 12px", color: t.win ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
+                          {t.pnl !== undefined ? `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${(t.pnlPct! * 100).toFixed(1)}%)` : "-"}
+                        </td>
+                        <td style={{ padding: "8px 12px", color: "#a1a1aa", fontSize: 11 }}>{t.exitReason ?? "-"}</td>
+                        <td style={{ padding: "8px 12px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <TierBadge tier={t.score.tier} />
+                            <span style={{ color: "#a1a1aa", fontSize: 11 }}>{t.score.total}/33</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </section>
       )}
 

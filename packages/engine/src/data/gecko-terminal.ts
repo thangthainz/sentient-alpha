@@ -25,6 +25,48 @@ const TF_AGG: Record<Timeframe, number> = {
   "1d": 1,
 };
 
+async function fetchOhlcvChunk(
+  poolAddress: string,
+  timeframe: Timeframe,
+  limit: number,
+  beforeTimestamp?: number
+): Promise<Candle[]> {
+  const tf = TF_MAP[timeframe];
+  const agg = TF_AGG[timeframe];
+  const params = new URLSearchParams({ aggregate: String(agg), limit: String(limit) });
+  if (beforeTimestamp) params.set("before_timestamp", String(beforeTimestamp));
+  const url = `${BASE}/networks/${NETWORK}/pools/${poolAddress}/ohlcv/${tf}?${params}`;
+
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (res.ok) break;
+    if (res.status === 429) {
+      const backoff = (attempt + 1) * 15000;
+      console.log(`[GeckoTerminal] 429 rate limit, retry in ${backoff / 1000}s (attempt ${attempt + 1}/4)`);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
+    }
+    break;
+  }
+
+  if (!res || !res.ok) {
+    throw new Error(`GeckoTerminal OHLCV error (${res?.status}): ${await res?.text()}`);
+  }
+
+  const data = await res.json() as any;
+  const list = data?.data?.attributes?.ohlcv_list ?? [];
+
+  return list.map((item: number[]) => ({
+    timestamp: item[0],
+    open: item[1],
+    high: item[2],
+    low: item[3],
+    close: item[4],
+    volume: item[5],
+  }));
+}
+
 export async function fetchOhlcv(
   poolAddress: string,
   timeframe: Timeframe = "1h",
@@ -34,43 +76,65 @@ export async function fetchOhlcv(
   const cached = ohlcvCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
 
-  const tf = TF_MAP[timeframe];
-  const agg = TF_AGG[timeframe];
-  const url = `${BASE}/networks/${NETWORK}/pools/${poolAddress}/ohlcv/${tf}?aggregate=${agg}&limit=${limit}`;
-
-  let res: Response | null = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (res.ok) break;
-    if (res.status === 429) {
-      if (cached && attempt === 3) return cached.data;
-      const backoff = (attempt + 1) * 15000;
-      console.log(`[GeckoTerminal] 429 rate limit, retry in ${backoff/1000}s (attempt ${attempt + 1}/4)`);
-      await new Promise(r => setTimeout(r, backoff));
-      continue;
-    }
-    break;
-  }
-
-  if (!res || !res.ok) {
+  try {
+    const raw = await fetchOhlcvChunk(poolAddress, timeframe, Math.min(limit, 1000));
+    const candles = raw.reverse();
+    ohlcvCache.set(cacheKey, { data: candles, ts: Date.now() });
+    return candles;
+  } catch (err) {
     if (cached) return cached.data;
-    throw new Error(`GeckoTerminal OHLCV error (${res?.status}): ${await res?.text()}`);
+    throw err;
+  }
+}
+
+/**
+ * Fetch extended OHLCV history by paginating with before_timestamp.
+ * Use for backtests requiring >1000 candles (~41 days for 1h).
+ */
+export async function fetchOhlcvExtended(
+  poolAddress: string,
+  timeframe: Timeframe = "1h",
+  totalCandles = 4320 // 180 days @ 1h
+): Promise<Candle[]> {
+  const cacheKey = `${poolAddress}_${timeframe}_ext_${totalCandles}`;
+  const cached = ohlcvCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL * 5) return cached.data;
+
+  const chunkSize = 1000;
+  const allCandles: Candle[] = [];
+  let beforeTs: number | undefined = undefined;
+
+  const chunksNeeded = Math.ceil(totalCandles / chunkSize);
+  for (let i = 0; i < chunksNeeded; i++) {
+    const remaining = totalCandles - allCandles.length;
+    const chunk = await fetchOhlcvChunk(
+      poolAddress,
+      timeframe,
+      Math.min(chunkSize, remaining),
+      beforeTs
+    );
+
+    if (chunk.length === 0) break;
+    allCandles.push(...chunk);
+
+    // GeckoTerminal returns newest first; oldest is the last
+    beforeTs = chunk[chunk.length - 1].timestamp;
+
+    if (chunk.length < chunkSize) break;
+    if (i < chunksNeeded - 1) await new Promise(r => setTimeout(r, 3000));
   }
 
-  const data = await res.json() as any;
-  const list = data?.data?.attributes?.ohlcv_list ?? [];
+  // Dedupe + sort oldest -> newest
+  const seen = new Set<number>();
+  const deduped = allCandles.filter(c => {
+    if (seen.has(c.timestamp)) return false;
+    seen.add(c.timestamp);
+    return true;
+  });
+  deduped.sort((a, b) => a.timestamp - b.timestamp);
 
-  const candles = list.map((item: number[]) => ({
-    timestamp: item[0],
-    open: item[1],
-    high: item[2],
-    low: item[3],
-    close: item[4],
-    volume: item[5],
-  })).reverse();
-
-  ohlcvCache.set(cacheKey, { data: candles, ts: Date.now() });
-  return candles;
+  ohlcvCache.set(cacheKey, { data: deduped, ts: Date.now() });
+  return deduped;
 }
 
 const STABLECOINS = ["usdt", "usdc", "usdt0", "usde", "dai", "frax", "lusd", "tusd", "busd", "musd"];

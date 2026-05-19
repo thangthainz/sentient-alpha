@@ -12,6 +12,8 @@ import { scoreSignal } from "./scoring/scorer.js";
 import { RiskManager } from "./risk/manager.js";
 import { DexExecutor } from "./execution/dex.js";
 import { PaperTrader } from "./paper/tracker.js";
+import { seedPaperTrader } from "./paper/seed.js";
+import type { SeedResult } from "./paper/seed.js";
 import { TradingMemoryStore } from "./memory/store.js";
 import { TradingLearner } from "./memory/learner.js";
 import { fetchOhlcv, fetchTopPools } from "./data/gecko-terminal.js";
@@ -30,6 +32,7 @@ export class SentientAlphaAgent {
   private mode: AgentMode;
 
   private watchedPools: Array<{ address: string; name: string }> = [];
+  private seedResult: SeedResult | null = null;
 
   constructor(mode: AgentMode = "paper") {
     const rpcUrl = process.env.MANTLE_RPC_URL || "https://rpc.mantle.xyz";
@@ -76,6 +79,24 @@ export class SentientAlphaAgent {
     this.watchedPools = pools.map((p) => ({ address: p.address, name: p.name }));
     console.log(`[INIT] Watching ${this.watchedPools.length} pools:`);
     this.watchedPools.forEach((p) => console.log(`  - ${p.name} (${p.address})`));
+
+    // Seed paper portfolio with historical replay (only once per process)
+    if (this.mode === "paper" && this.paper.toJSON().closedTrades.length === 0) {
+      const seedDays = parseInt(process.env.SEED_DAYS ?? "180", 10);
+      const seedThreshold = parseInt(process.env.SEED_THRESHOLD ?? "10", 10);
+      try {
+        this.seedResult = await seedPaperTrader(this.paper, {
+          pools: this.watchedPools,
+          daysBack: seedDays,
+          initialCapital: 10000,
+          entryThreshold: seedThreshold,
+        });
+        // Sync risk manager portfolio value to the seeded capital
+        this.risk.setPortfolioValue(this.paper.toJSON().currentCapital);
+      } catch (err: any) {
+        console.error(`[SEED] Failed: ${err.message} (continuing without seed)`);
+      }
+    }
 
     console.log(`\n[LOOP] Starting autonomous loop (${ENGINE.CYCLE_INTERVAL_MS / 1000}s interval)\n`);
     await this.runCycle();
@@ -294,5 +315,9 @@ export class SentientAlphaAgent {
 
   getMode(): AgentMode {
     return this.mode;
+  }
+
+  getSeedResult(): SeedResult | null {
+    return this.seedResult;
   }
 }

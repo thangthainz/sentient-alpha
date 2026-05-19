@@ -72,6 +72,25 @@ const server = createServer(async (req, res) => {
       return json(res, agent.getPaperPortfolio());
     }
 
+    // Backtest seed result (historical replay)
+    if (path === "/api/backtest" && req.method === "GET") {
+      const seed = agent.getSeedResult();
+      const portfolio = agent.getPaperPortfolio();
+      return json(res, {
+        seed,
+        portfolio: {
+          initialCapital: portfolio.initialCapital,
+          currentCapital: portfolio.currentCapital,
+          totalPnl: portfolio.totalPnl,
+          maxDrawdown: portfolio.maxDrawdown,
+          winCount: portfolio.winCount,
+          lossCount: portfolio.lossCount,
+        },
+        trades: portfolio.closedTrades,
+        stats: agent.getPaperStats(),
+      });
+    }
+
     // Daily brief
     if (path === "/api/brief" && req.method === "GET") {
       const portfolio = agent.getPaperPortfolio();
@@ -172,6 +191,7 @@ async function main() {
     console.log("  GET  /api/state       — Agent state + stats");
     console.log("  GET  /api/decisions   — Decision timeline");
     console.log("  GET  /api/portfolio   — Paper portfolio");
+    console.log("  GET  /api/backtest    — Historical replay results");
     console.log("  GET  /api/brief       — Daily trading brief");
     console.log("  GET  /api/weekly      — Weekly insights report");
     console.log("  POST /api/coach       — Ask Trading Coach");
