@@ -1,3 +1,7 @@
+import { config } from "dotenv";
+import { resolve } from "node:path";
+config({ path: resolve(__dirname, "../../../../.env") });
+
 import { createServer } from "node:http";
 import { SentientAlphaAgent } from "../agent.js";
 import type { AgentMode } from "../agent.js";

@@ -72,7 +72,7 @@ export class SentientAlphaAgent {
     this.state.isRunning = true;
 
     console.log("[INIT] Discovering top Mantle pools...");
-    const pools = await fetchTopPools(5);
+    const pools = await fetchTopPools(3);
     this.watchedPools = pools.map((p) => ({ address: p.address, name: p.name }));
     console.log(`[INIT] Watching ${this.watchedPools.length} pools:`);
     this.watchedPools.forEach((p) => console.log(`  - ${p.name} (${p.address})`));
@@ -87,22 +87,26 @@ export class SentientAlphaAgent {
     const cycleNum = this.state.cycleCount;
     console.log(`\n========== CYCLE #${cycleNum} ==========`);
 
-    for (const pool of this.watchedPools) {
+    for (let i = 0; i < this.watchedPools.length; i++) {
+      const pool = this.watchedPools[i];
       try {
         await this.analyzePool(pool.address, pool.name);
       } catch (err: any) {
         console.error(`[CYCLE] Error analyzing ${pool.name}: ${err.message}`);
       }
+      if (i < this.watchedPools.length - 1) await new Promise(r => setTimeout(r, 3000));
     }
 
     // Update paper positions
     if (this.mode === "paper") {
       const prices = new Map<string, number>();
-      for (const pool of this.watchedPools) {
+      for (let i = 0; i < this.watchedPools.length; i++) {
+        const pool = this.watchedPools[i];
         try {
           const candles = await fetchOhlcv(pool.address, "1h", 1);
           if (candles.length > 0) prices.set(pool.name, candles[candles.length - 1].close);
         } catch { /* skip */ }
+        if (i < this.watchedPools.length - 1) await new Promise(r => setTimeout(r, 2000));
       }
       const closed = this.paper.updatePositions(prices);
       for (const trade of closed) {

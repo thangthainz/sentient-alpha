@@ -4,6 +4,9 @@ import { DATA_SOURCES } from "@sentient-alpha/shared";
 const BASE = DATA_SOURCES.GECKO_TERMINAL;
 const NETWORK = "mantle";
 
+const ohlcvCache = new Map<string, { data: Candle[]; ts: number }>();
+const CACHE_TTL = 120_000;
+
 const TF_MAP: Record<Timeframe, string> = {
   "1m": "minute",
   "5m": "minute",
@@ -27,6 +30,10 @@ export async function fetchOhlcv(
   timeframe: Timeframe = "1h",
   limit = 200
 ): Promise<Candle[]> {
+  const cacheKey = `${poolAddress}_${timeframe}_${limit}`;
+  const cached = ohlcvCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+
   const tf = TF_MAP[timeframe];
   const agg = TF_AGG[timeframe];
   const url = `${BASE}/networks/${NETWORK}/pools/${poolAddress}/ohlcv/${tf}?aggregate=${agg}&limit=${limit}`;
@@ -36,13 +43,14 @@ export async function fetchOhlcv(
   });
 
   if (!res.ok) {
+    if (res.status === 429 && cached) return cached.data;
     throw new Error(`GeckoTerminal OHLCV error (${res.status}): ${await res.text()}`);
   }
 
   const data = await res.json() as any;
   const list = data?.data?.attributes?.ohlcv_list ?? [];
 
-  return list.map((item: number[]) => ({
+  const candles = list.map((item: number[]) => ({
     timestamp: item[0],
     open: item[1],
     high: item[2],
@@ -50,6 +58,16 @@ export async function fetchOhlcv(
     close: item[4],
     volume: item[5],
   })).reverse();
+
+  ohlcvCache.set(cacheKey, { data: candles, ts: Date.now() });
+  return candles;
+}
+
+const STABLECOINS = ["usdt", "usdc", "usdt0", "usde", "dai", "frax", "lusd", "tusd", "busd", "musd"];
+
+function isStablePair(name: string): boolean {
+  const parts = name.toLowerCase().split("/").map(s => s.trim().split(" ")[0]);
+  return parts.length === 2 && STABLECOINS.includes(parts[0]) && STABLECOINS.includes(parts[1]);
 }
 
 export async function fetchTopPools(limit = 10): Promise<Array<{ address: string; name: string; volume24h: number; tvl: number }>> {
@@ -60,12 +78,15 @@ export async function fetchTopPools(limit = 10): Promise<Array<{ address: string
   const data = await res.json() as any;
   const pools = data?.data ?? [];
 
-  return pools.slice(0, limit).map((p: any) => ({
-    address: p.attributes?.address ?? p.id?.split("_")[1] ?? "",
-    name: p.attributes?.name ?? "",
-    volume24h: parseFloat(p.attributes?.volume_usd?.h24 ?? "0"),
-    tvl: parseFloat(p.attributes?.reserve_in_usd ?? "0"),
-  }));
+  return pools
+    .map((p: any) => ({
+      address: p.attributes?.address ?? p.id?.split("_")[1] ?? "",
+      name: p.attributes?.name ?? "",
+      volume24h: parseFloat(p.attributes?.volume_usd?.h24 ?? "0"),
+      tvl: parseFloat(p.attributes?.reserve_in_usd ?? "0"),
+    }))
+    .filter((p: { name: string }) => !isStablePair(p.name))
+    .slice(0, limit);
 }
 
 export async function fetchTokenPrice(tokenAddress: string): Promise<number> {

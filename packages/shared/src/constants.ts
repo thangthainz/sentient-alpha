@@ -63,7 +63,7 @@ export const RISK = {
 } as const;
 
 export const ENGINE = {
-  CYCLE_INTERVAL_MS: 60_000,
+  CYCLE_INTERVAL_MS: 120_000,
   CANDLE_TIMEFRAMES: ["5m", "15m", "1h", "4h"] as const,
   DEFAULT_LOOKBACK: 200,
   SLIPPAGE_BPS: 50,
